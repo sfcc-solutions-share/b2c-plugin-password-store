@@ -286,13 +286,6 @@ echo "pinentry-program $(which pinentry-mac)" >> ~/.gnupg/gpg-agent.conf
 gpgconf --kill gpg-agent
 ```
 
-## Security Considerations
-
-- Credentials are encrypted with GPG (at rest and in transit within pass)
-- Access requires your GPG private key passphrase
-- Pass integrates with git for version control and sync
-- Consider using a hardware security key (YubiKey) for GPG
-
 ## Related
 
 - [B2C CLI Documentation](https://salesforcecommercecloud.github.io/b2c-developer-tooling/)
