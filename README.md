@@ -43,7 +43,7 @@ b2c plugins
 ## Storing Credentials
 
 Credentials are stored using the standard pass multi-line format:
-- **First line**: WebDAV password/API key
+- **First line**: WebDAV password/Access Token
 - **Additional lines**: `key: value` pairs
 
 ### Entry Structure
@@ -63,12 +63,13 @@ pass insert -m b2c-cli/_default
 
 Enter (press Ctrl+D when done):
 ```
-
+[EMPTY LINE]
 client-id: my-oauth-client
 client-secret: my-oauth-secret
 ```
 
-Note: The first line can be empty if you only need key-value fields.
+> [!TIP]
+> Note: The first line can be empty if you only need key-value fields.
 
 ### Instance-Specific Credentials
 
