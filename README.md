@@ -81,9 +81,10 @@ pass insert -m b2c-cli/staging
 
 Enter:
 ```
-my-webdav-api-key
+my-webdav-access-key
 username: user@example.com
 hostname: dev01-realm-customer.demandware.net
+code-version: version1
 ```
 
 ### Supported Fields
