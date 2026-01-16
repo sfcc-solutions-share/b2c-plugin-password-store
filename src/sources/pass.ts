@@ -70,23 +70,35 @@ export function getEntry(path: string): string | undefined {
  * Parses a pass entry in the standard multi-line format.
  *
  * Format:
- * - First line: the main password (stored in `_password`)
- * - Subsequent lines: `key: value` pairs
+ * - First line: the password (if non-empty)
+ * - All subsequent non-empty lines: `key: value` pairs
  *
  * @param content - The raw entry content from pass
  * @returns Parsed key-value object
  *
  * @example
  * ```typescript
- * const content = `my-api-key
+ * // Entry with password on first line
+ * const content1 = `my-api-key
  * username: user@example.com
  * hostname: dev01.example.com`;
  *
- * const parsed = parsePassEntry(content);
+ * parsePassEntry(content1);
  * // {
  * //   _password: 'my-api-key',
  * //   username: 'user@example.com',
  * //   hostname: 'dev01.example.com'
+ * // }
+ *
+ * // Entry with empty first line (no password)
+ * const content2 = `
+ * client-id: my-client
+ * client-secret: my-secret`;
+ *
+ * parsePassEntry(content2);
+ * // {
+ * //   'client-id': 'my-client',
+ * //   'client-secret': 'my-secret'
  * // }
  * ```
  */
@@ -94,21 +106,19 @@ export function parsePassEntry(content: string): ParsedPassEntry {
   const lines = content.split('\n');
   const result: ParsedPassEntry = {};
 
-  // First non-empty line is the password
-  let foundPassword = false;
-  for (const line of lines) {
-    const trimmed = line.trim();
-
-    // Skip empty lines before the password
-    if (!foundPassword) {
-      if (trimmed) {
-        result._password = trimmed;
-        foundPassword = true;
-      }
-      continue;
+  // First line is always the password (if non-empty)
+  if (lines.length > 0) {
+    const firstLine = lines[0].trim();
+    if (firstLine) {
+      result._password = firstLine;
     }
+  }
 
-    // Parse key: value lines
+  // All subsequent non-empty lines are key: value pairs
+  for (let i = 1; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) continue;
+
     const colonIndex = trimmed.indexOf(':');
     if (colonIndex > 0) {
       const key = trimmed.slice(0, colonIndex).trim();
