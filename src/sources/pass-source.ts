@@ -17,6 +17,9 @@ const DEFAULT_PREFIX = 'b2c-cli';
 /** Entry name for global defaults */
 const DEFAULT_ENTRY = '_default';
 
+/** Entry name for MRT credentials */
+const MOBIFY_ENTRY = '_mobify';
+
 /** Environment variable for prefix override */
 const ENV_PREFIX = 'SFCC_PASS_PREFIX';
 
@@ -41,30 +44,44 @@ const FIELD_MAP: Record<string, keyof NormalizedConfig> = {
   'mrt-project': 'mrtProject',
   'mrt-environment': 'mrtEnvironment',
   'mrt-api-key': 'mrtApiKey',
+  'mrt-origin': 'mrtOrigin',
 };
 
 /**
  * Configuration source that reads credentials from password-store.
  *
  * Credentials are stored in pass using the standard multi-line format:
- * - First line: WebDAV password/API key
+ * - First line: WebDAV password/API key (optional)
  * - Additional lines: `key: value` pairs
  *
  * Entry structure:
- * - `b2c-cli/_default` for global/shared credentials
- * - `b2c-cli/<instance>` for instance-specific credentials
+ * - `b2c-cli/_default` - Base global defaults
+ * - `b2c-cli/_default/<account-manager-host>` - Host-specific OAuth defaults
+ * - `b2c-cli/_mobify` - Base MRT credentials
+ * - `b2c-cli/_mobify/<cloud-origin-hostname>` - Cloud-origin-specific MRT credentials
+ * - `b2c-cli/<instance>` - Instance-specific credentials
  *
  * @example
  * ```bash
  * # Store global defaults (shared OAuth credentials)
- * pass insert b2c-cli/_default
+ * pass insert -m b2c-cli/_default
  * # Enter:
- * # <empty or global password>
  * # client-id: my-oauth-client
  * # client-secret: my-oauth-secret
  *
+ * # Store host-specific OAuth (for specific account manager)
+ * pass insert -m b2c-cli/_default/account-pod5.demandware.net
+ * # Enter:
+ * # client-id: pod5-client
+ * # client-secret: pod5-secret
+ *
+ * # Store MRT credentials
+ * pass insert -m b2c-cli/_mobify
+ * # Enter:
+ * # mrt-api-key: my-api-key
+ *
  * # Store instance-specific credentials
- * pass insert b2c-cli/staging
+ * pass insert -m b2c-cli/staging
  * # Enter:
  * # my-webdav-api-key
  * # username: user@example.com
@@ -85,12 +102,13 @@ export class PassSource implements ConfigSource {
    *
    * Resolution flow:
    * 1. Check if pass is available
-   * 2. Load global defaults from `b2c-cli/_default` (if exists)
-   * 3. Determine instance: options.instance → SFCC_PASS_INSTANCE
-   * 4. If instance determined, load and merge with global (instance overrides)
-   * 5. Return merged config
+   * 2. Load base _default
+   * 3. If accountManagerHost provided, load _default/{accountManagerHost}
+   * 4. Load instance config
+   * 5. Load MRT config (_mobify with optional cloud-origin)
+   * 6. Merge in order: _default → _default/{host} → _mobify → instance
    *
-   * @param options - Resolution options including instance selection
+   * @param options - Resolution options including instance, accountManagerHost, cloudOrigin
    * @returns Config and location, or undefined if not available
    */
   load(options: ResolveConfigOptions): ConfigLoadResult | undefined {
@@ -101,40 +119,38 @@ export class PassSource implements ConfigSource {
 
     const locationParts: string[] = [];
 
-    // Step 1: Load global defaults from _default entry
-    const globalPath = `${this.prefix}/${DEFAULT_ENTRY}`;
-    const globalEntry = getConfigFromPass(globalPath);
-    let globalConfig: NormalizedConfig | undefined;
+    // Step 1: Load base _default
+    const baseDefault = this.loadEntry(`${this.prefix}/${DEFAULT_ENTRY}`, locationParts);
 
-    if (globalEntry) {
-      globalConfig = this.mapToNormalizedConfig(globalEntry);
-      locationParts.push(`pass:${globalPath}`);
+    // Step 2: Load host-specific default if accountManagerHost provided
+    let hostDefault: NormalizedConfig | undefined;
+    if (options.accountManagerHost) {
+      hostDefault = this.loadEntry(
+        `${this.prefix}/${DEFAULT_ENTRY}/${options.accountManagerHost}`,
+        locationParts,
+      );
     }
 
-    // Step 2: Determine instance (flag → env var)
+    // Step 3: Load instance config
     const instance = options.instance ?? process.env[ENV_INSTANCE];
-
-    // Step 3: Load instance-specific config if we have an instance
     let instanceConfig: NormalizedConfig | undefined;
-
     if (instance) {
-      const instancePath = `${this.prefix}/${instance}`;
-      const instanceEntry = getConfigFromPass(instancePath);
-
-      if (instanceEntry) {
-        instanceConfig = this.mapToNormalizedConfig(instanceEntry);
-        locationParts.push(`pass:${instancePath}`);
-      }
+      instanceConfig = this.loadEntry(`${this.prefix}/${instance}`, locationParts);
     }
 
-    // If neither global nor instance config exists, return undefined
-    if (!globalConfig && !instanceConfig) {
+    // Step 4: Load MRT config (_mobify with optional cloud-origin)
+    const mrtConfig = this.loadMrtConfig(options, locationParts);
+
+    // If no config loaded from any source, return undefined
+    if (locationParts.length === 0) {
       return undefined;
     }
 
-    // Step 4: Merge configs (instance overrides global)
+    // Step 5: Merge in order: _default → _default/{host} → _mobify → instance
     const merged: NormalizedConfig = {
-      ...globalConfig,
+      ...baseDefault,
+      ...hostDefault,
+      ...mrtConfig,
       ...instanceConfig,
     };
 
@@ -142,6 +158,53 @@ export class PassSource implements ConfigSource {
       config: merged,
       location: locationParts.join(','),
     };
+  }
+
+  /**
+   * Load an entry from pass and map it to NormalizedConfig.
+   *
+   * @param path - Full path to the pass entry
+   * @param locationParts - Array to append location info to (for diagnostics)
+   * @returns NormalizedConfig or undefined if entry doesn't exist
+   */
+  private loadEntry(path: string, locationParts: string[]): NormalizedConfig | undefined {
+    const entry = getConfigFromPass(path);
+    if (entry) {
+      locationParts.push(`pass:${path}`);
+      return this.mapToNormalizedConfig(entry);
+    }
+    return undefined;
+  }
+
+  /**
+   * Load MRT config from _mobify entries.
+   *
+   * Tries cloud-origin-specific entry first, falls back to base _mobify.
+   *
+   * @param options - Resolution options with optional cloudOrigin
+   * @param locationParts - Array to append location info to
+   * @returns NormalizedConfig or undefined if no MRT config found
+   */
+  private loadMrtConfig(
+    options: ResolveConfigOptions,
+    locationParts: string[],
+  ): NormalizedConfig | undefined {
+    // Try cloud-origin-specific first
+    if (options.cloudOrigin) {
+      try {
+        const hostname = new URL(options.cloudOrigin).hostname;
+        const hostSpecific = this.loadEntry(
+          `${this.prefix}/${MOBIFY_ENTRY}/${hostname}`,
+          locationParts,
+        );
+        if (hostSpecific) return hostSpecific;
+      } catch {
+        // Invalid URL, skip host-specific lookup
+      }
+    }
+
+    // Fall back to base _mobify
+    return this.loadEntry(`${this.prefix}/${MOBIFY_ENTRY}`, locationParts);
   }
 
   /**

@@ -22,6 +22,7 @@ export interface NormalizedConfig {
   mrtProject?: string;
   mrtEnvironment?: string;
   mrtApiKey?: string;
+  mrtOrigin?: string;
   accountManagerHost?: string;
 }
 
@@ -35,6 +36,10 @@ export interface ResolveConfigOptions {
   configPath?: string;
   /** Starting directory for file searches */
   startDir?: string;
+  /** Cloud origin for MRT (e.g., https://runtime.commercecloud.com) */
+  cloudOrigin?: string;
+  /** Account Manager hostname for OAuth */
+  accountManagerHost?: string;
 }
 
 /**
